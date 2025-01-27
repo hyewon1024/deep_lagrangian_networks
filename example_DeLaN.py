@@ -3,18 +3,18 @@ import torch
 import numpy as np
 import time
 
-import matplotlib as mp
+# import matplotlib as mp
 
-try:
-    mp.use("Qt5Agg")
-    mp.rc('text', usetex=False)
-    #mp.rcParams['text.latex.preamble'] = r"\usepackage{amsmath}"
+# try:
+#     mp.use("Qt5Agg")
+#     mp.rc('text', usetex=False)
+#     #mp.rcParams['text.latex.preamble'] = r"\usepackage{amsmath}"
 
-except ImportError:
-    pass
+# except ImportError:
+#     pass
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
+# import matplotlib.pyplot as plt
+# import matplotlib.patches as mpatches
 
 from deep_lagrangian_networks.DeLaN_model import DeepLagrangianNetwork
 from deep_lagrangian_networks.replay_memory import PyTorchReplayMemory
@@ -38,7 +38,7 @@ if __name__ == "__main__":
     train_data, test_data, divider, dt_mean = load_dataset()
     train_labels, train_qp, train_qv, train_qa, train_p, train_pd, train_tau = train_data
     test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g = test_data
-
+    
     print("\n\n################################################")
     print("Characters:")
     print("   Test Characters = {0}".format(test_labels))
@@ -100,6 +100,7 @@ if __name__ == "__main__":
         l_mem, n_batches = 0.0, 0.0
 
         for q, qd, qdd, tau in mem:
+            
             t0_batch = time.perf_counter()
 
             # Reset gradients:

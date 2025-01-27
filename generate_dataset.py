@@ -3,7 +3,7 @@ import gym
 from IPython import display as ipythondisplay
 from PIL import Image
 
-def calculate_acceleration(states, actions, env):
+def calculate_acceleration_cartpole(states, actions, env):
     x = states[:, 0]
     x_dot = states[:, 1]
     theta = states[:, 2]
@@ -12,8 +12,7 @@ def calculate_acceleration(states, actions, env):
 
     costheta = np.cos(theta)
     sintheta = np.sin(theta)
-
-    temp = (torque + env.polemass_length * theta_dot**2 * sintheta) / env.total_mass
+    temp = (torque[:, 0] + env.polemass_length * theta_dot**2 * sintheta) / env.total_mass
     thetaacc = (env.gravity * sintheta - costheta * temp) / (
         env.length * (4.0 / 3.0 - env.masspole * costheta**2 / env.total_mass)
     )
@@ -27,7 +26,7 @@ def generate_rand_data_with_pd_control(env, ntrajs, traj_len, dt, kp=50, kr=10):
 
     # Trajectory data placeholders
     xs = np.zeros((ntrajs, traj_len, env.observation_space.shape[0]))
-    uss = np.zeros((ntrajs, traj_len - 1, 1))
+    uss = np.zeros((ntrajs, traj_len - 1,  2))
 
     for i in range(ntrajs):
         # Reset environment and initialize
@@ -47,7 +46,7 @@ def generate_rand_data_with_pd_control(env, ntrajs, traj_len, dt, kp=50, kr=10):
             next_state, _, done, _ = env.step(action)
 
             xs[i, t + 1, :] = next_state
-            uss[i, t, :] = action
+            uss[i, t, :] = np.array([action, 0]) #fx, Ftheta
 
             state = next_state
             prev_error = error
@@ -64,7 +63,7 @@ def generate_rand_data_with_pd_control(env, ntrajs, traj_len, dt, kp=50, kr=10):
     qdot = states[:, [1, 3]]  # Velocity variables
 
     # Calculate qddot
-    qddot = calculate_acceleration(states, torqueset, env)
+    qddot = calculate_acceleration_cartpole(states, torqueset, env)
 
     return q, qdot, qddot, torqueset
 # Example usage
@@ -77,5 +76,5 @@ if __name__ == "__main__":
 
     print("q shape:", q.shape)
     print("qdot shape:", qdot.shape)
-    print("qddot shape:", qddot)
-    print("torque shape:", torque)
+    print("qddot shape:", qddot.shape)
+    print("torque shape:", torque.shape)
