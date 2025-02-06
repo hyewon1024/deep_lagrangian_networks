@@ -5,11 +5,14 @@ import gym
 import os 
 import scipy.io as sio
 import time 
+import random
+import math
 
 from deep_lagrangian_networks.DeLaN_model import DeepLagrangianNetwork
 from deep_lagrangian_networks.replay_memory import PyTorchReplayMemory
 from deep_lagrangian_networks.utils import load_dataset, init_env
 from generate_dataset import generate_rand_data_with_pd_control
+from data.continuous_cartpole import ContinuousCartPoleEnv
 
 def replay_buffer(data, batch_size):
    
@@ -18,19 +21,54 @@ def replay_buffer(data, batch_size):
         for x in data
     ]
     
-    train_qp, train_qv, train_qa, torque = data_torch[:4]
+    train_qp, train_qv, train_qa, train_torque = data_torch[:4]
     total_samples= train_qp.shape[0]
+    mem= []
 
-    # 배치 리스트 생성
+    # while total_samples > batch_size:
+    #      idx = random.sample(range(total_samples), batch_size) #random sampling 
+    #      mem.append((train_qp[idx], train_qv[idx] , train_qa[idx], train_torque[idx]))
+    #      total_samples -= batch_size
+
     mem = [
         (train_qp[i:i + batch_size],
          train_qv[i:i + batch_size],
          train_qa[i:i + batch_size],
-         torque[i:i + batch_size])
+         train_torque[i: i + batch_size])
         for i in range(0, total_samples, batch_size)
     ]
-    
     return mem        
+import torch
+
+def compute_energy(q, qd):
+    x, theta, x_dot, theta_dot= q[:,0], q[:,1], qd[:,0], qd[:,1]
+
+    mc=1.0
+    mp=0.1
+    l=0.5
+    g=9.8
+
+    cos_theta = torch.cos(theta)
+    sin_theta = torch.sin(theta)   
+    T= (0.5*mc + 0.5*mp) *(x_dot)**2 + x_dot* l*mp*theta_dot*cos_theta+0.5*mp*(l)**2+ (theta_dot)**2
+    V= mp*g*l*cos_theta
+    energy=T+V
+    return energy
+
+def compute_tau(q, qd, qdd):
+    g = 9.8
+    m1 = 1.1  # 질량 계수
+    m2 = 0.1  # 추가 질량 계수
+    l = 0.5   # 길이 계수
+    x, theta, x_dot, theta_dot, x_ddot, theta_ddot = q[:, 0], q[:, 1], qd[:, 0], qd[:, 1], qdd[:,0], qdd[:, 1]
+    cos_theta = torch.cos(theta)
+    sin_theta = torch.sin(theta)
+    
+    tau1 = m1 * x_ddot +  m2 * l * theta_ddot * cos_theta -  m2 * l * (theta_dot**2) * sin_theta
+    tau2 = m2 * l * x_ddot * cos_theta + m2 * (l**2) *  theta_ddot - m2 * g * l *  sin_theta
+    
+    tau = torch.stack([tau1, tau2], dim=1)  # (batch_size, 2) 형태로 반환
+    return tau
 
 if __name__ == "__main__":
 
@@ -55,18 +93,19 @@ if __name__ == "__main__":
              'w_init': 'xavier_normal',
              'gain_hidden': np.sqrt(2.),
              'gain_output': 0.1,
-             'ntrajs': 100,
+             'ntrajs': 90,
              'traj_len': 50,
              'dt' : 0.05,
-             'n_minibatch': 50,
+             'n_minibatch': 128,
              'learning_rate': 5.e-04,
              'weight_decay': 1.e-5,
-             'max_epoch': 100} #10000
+             'max_epoch': 1000} #10000
     
     #Generate train/test dataset 
-    env = gym.make("CartPole-v1")
+    #env = gym.make("CartPole-v1")
+    env = ContinuousCartPoleEnv()
     train_data= generate_rand_data_with_pd_control(env, ntrajs=hyper["ntrajs"], traj_len=hyper["traj_len"], dt=hyper["dt"], kp=50, kr=10)
-    test_data= generate_rand_data_with_pd_control(env, ntrajs=5, traj_len=40, dt=0.05, kp=50, kr=10)
+    test_data= generate_rand_data_with_pd_control(env, ntrajs=2, traj_len=100, dt=0.05, kp=50, kr=10)
     train_qp, train_qv,  train_qa, train_tau, train_m, train_c, train_g, train_f, train_control_input= train_data #prediction model과의 torque, dE/dt 차이를 계산
     test_qp, test_qv,  test_qa, test_tau, test_m, test_c, test_g, test_f, test_control_input = test_data
 
@@ -90,42 +129,74 @@ if __name__ == "__main__":
                                  weight_decay=hyper["weight_decay"],
                                  amsgrad=True)
     # Generate Replay Memory:
-    mem_dim = ((n_dof, ), (n_dof, ), (n_dof, ))
     mem= replay_buffer(train_data, batch_size=hyper['n_minibatch'])
-    #mem = PyTorchReplayMemory(train_qp.shape[0], hyper["n_minibatch"], mem_dim, cuda) #batch size, n_minibatch, mem_dim 
-    #mem.add_samples([train_qp, train_qv, train_qa, train_tau])
 
     # Start Training Loop:
     t0_start = time.perf_counter()
+    Kp = 10
+    Kd = 1
 
     epoch_i = 0
+
     while epoch_i < hyper['max_epoch'] and not load_model:
         l_mem_mean_inv_dyn, l_mem_var_inv_dyn = 0.0, 0.0
         l_mem_mean_dEdt, l_mem_var_dEdt = 0.0, 0.0
         l_mem, n_batches = 0.0, 0.0
 
-        for q, qd, qdd, tau in mem:
+        # with torch.no_grad():
+        #     sample_num = hyper['n_minibatch']
+        #     q_0= np.random.uniform(-4.8, 4.8, size=(sample_num, 1))
+        #     q_1= np.random.uniform(-3.14, 3.14, size=(sample_num, 1))  # Mean 0, Std 1 
+        #     q_target= torch.from_numpy(np.hstack([q_0, q_1])).float()
+
+        #     qd_0=  np.random.normal(0, 1, size=(sample_num, 1))
+        #     qd_1= np.random.normal(0, 1, size=(sample_num, 1))  # Mean 0, Std 1
+        #     qd_target= torch.from_numpy(np.hstack([qd_0, qd_1])).float()
+        #     qdd_target=torch.from_numpy(np.random.normal(0, 1, size= (sample_num, 2))).float()
+
+        #     tau_ff = delan_model(q_target, qd_target, qdd_target)[0]
+        #     last_error=np.zeros_like(q_target)
+
+        for i, (q, qd, qdd, tau) in enumerate(mem):
+            zeros = torch.zeros_like(q).float().to(delan_model.device)
             t0_batch = time.perf_counter()
 
-            # Reset gradients:
             optimizer.zero_grad()
+            # error= q- q_target
+            # d_error = error - last_error
+            # #x, theta, x_dot, theta_dot, x_ddot, theta_ddot = q[:, 0], q[:, 1], qd[:, 0], qd[:, 1], qdd[:,0], qdd[:, 1]
+            # #tau =compute_tau(x, theta, x_dot, theta_dot, x_ddot, theta_ddot) #Kp * (q_target - q) + Kd *(qd_target-qd)+tau_save[-1]
+            # last_error=error 
 
-            # Compute the Rigid Body Dynamics Model:
+            # Reset gradients:
+
+            #energy controller regulates the systems energy 
+            #For the training dataset, we use the energy controller to swing-up the pendulum, stabilize the pendulum at the top and let the pendulum fall down after 2s. Once the pendulum settles the process repeated until about 200s of data is collected.
+            # energy_ = compute_energy(q, qd)
+            # energy_target = compute_energy(q_target, qd_target)
+            # e_loss= (energy_-energy_target).unsqueeze(1)
+            # ke= 10
+            # kp =20
+            # tau = ke * e_loss* torch.sign(qd * torch.cos(q)) - kp*q 
+            
+            # qdd= delan_model.for_dyn(q, qd, tau)
             tau_hat, dEdt_hat = delan_model(q, qd, qdd)
+            tau_= compute_tau(q, qd, qdd)
+
 
             # Compute the loss of the Euler-Lagrange Differential Equation:
-            err_inv = torch.sum((tau_hat - tau) ** 2, dim=1)
+            err_inv = torch.sum((tau_hat - tau_) ** 2, dim=1)
             l_mean_inv_dyn = torch.mean(err_inv)
             l_var_inv_dyn = torch.var(err_inv)
 
             # Compute the loss of the Power Conservation:
-            dEdt = torch.matmul(qd.view(-1, 2, 1).transpose(dim0=1, dim1=2), tau.view(-1, 2, 1)).view(-1)
+            dEdt = torch.matmul(qd.view(-1, 2, 1).transpose(dim0=1, dim1=2), tau_.view(-1, 2, 1)).view(-1)
             err_dEdt = (dEdt_hat - dEdt) ** 2
             l_mean_dEdt = torch.mean(err_dEdt)
             l_var_dEdt = torch.var(err_dEdt)
 
             # Compute gradients & update the weights:
-            loss = l_mean_inv_dyn + l_mem_mean_dEdt
+            loss = l_mean_inv_dyn + l_mean_dEdt #수정 원래 l_mem_mean_dEdt
             loss.backward()
             optimizer.step()
 
@@ -146,7 +217,7 @@ if __name__ == "__main__":
         l_mem_var_dEdt /= float(n_batches)
         l_mem /= float(n_batches)
         epoch_i += 1
-        if epoch_i == 1 or np.mod(epoch_i, 10) == 0:
+        if epoch_i == 1 or np.mod(epoch_i, 100) == 0:
             print("Epoch {0:05d}: ".format(epoch_i), end=" ")
             print("Time = {0:05.1f}s".format(time.perf_counter() - t0_start), end=", ")
             print("Loss = {0:.3e}".format(l_mem), end=", ")
@@ -181,6 +252,7 @@ if __name__ == "__main__":
 
     delan_tau, delan_dEdt = np.zeros(test_qp.shape), np.zeros((test_qp.shape[0], 1))
     t0_evaluation = time.perf_counter()
+    test_save_tau=[]
     for i in range(test_qp.shape[0]):
 
         with torch.no_grad():
@@ -195,6 +267,11 @@ if __name__ == "__main__":
             delan_tau[i] = out[0].cpu().numpy().squeeze()
             delan_dEdt[i] = out[1].cpu().numpy()
 
+            q_target =q.clone() # x 값은 유지, 각도는 0 
+            q_target[:, 1] = 0  
+            qd_target = torch.zeros_like(qd)
+            test_save_tau.append(compute_tau(q, qd, qdd))
+
     #tau 저장하기 
     metric_folder = "cartpole_metrics_DeLan"
     os.makedirs(metric_folder, exist_ok=True)
@@ -206,7 +283,7 @@ if __name__ == "__main__":
     for key, value in zip([
         'q','qd', 'qdd', 'delan_tau', 'delan_dEdt', 'delan_m', 'delan_c', 'delan_g', 'test_m', 'test_c', 'test_g', 'test_tau', 'test_torque'
     ], [
-    test_qp, test_qv,  test_qa,  delan_tau, delan_dEdt, delan_m, delan_c, delan_g, test_m, test_c, test_g, test_tau, test_control_input
+    test_qp, test_qv,  test_qa,  delan_tau, delan_dEdt, delan_m, delan_c, delan_g, test_m, test_c, test_g, test_save_tau, test_control_input
     ]):
         all_data[key].append(value)
 
@@ -222,6 +299,8 @@ if __name__ == "__main__":
     err_c = 1. / float(test_qp.shape[0]) * np.sum((delan_c - test_c) ** 2)
     err_tau = 1. / float(test_qp.shape[0]) * np.sum((delan_tau - test_tau) ** 2)
     err_dEdt = 1. / float(test_qp.shape[0]) * np.sum((delan_dEdt - test_dEdt) ** 2)
+
+    #mass matrix, corroli matrix 비교
 
     print("\nPerformance:")
     print("                Torque MSE = {0:.3e}".format(err_tau))

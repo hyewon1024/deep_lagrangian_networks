@@ -64,7 +64,7 @@ if __name__ == "__main__":
              'max_epoch': 100} #10000
     
     #Generate train/test dataset 
-    env = gym.make("CartPole-v1")
+    env = gym.make("Acrobot-v1")
     train_data= generate_rand_data_with_pd_control(env, ntrajs=hyper["ntrajs"], traj_len=hyper["traj_len"], dt=hyper["dt"], kp=50, kr=10)
     test_data= generate_rand_data_with_pd_control(env, ntrajs=5, traj_len=40, dt=0.05, kp=50, kr=10)
     train_qp, train_qv,  train_qa, train_tau, train_m, train_c, train_g, train_f, train_control_input= train_data #prediction model과의 torque, dE/dt 차이를 계산
@@ -90,10 +90,8 @@ if __name__ == "__main__":
                                  weight_decay=hyper["weight_decay"],
                                  amsgrad=True)
     # Generate Replay Memory:
-    mem_dim = ((n_dof, ), (n_dof, ), (n_dof, ))
+    mem_dim = ((n_dof, ), (n_dof, ), (n_dof, ), (n_dof, ))
     mem= replay_buffer(train_data, batch_size=hyper['n_minibatch'])
-    #mem = PyTorchReplayMemory(train_qp.shape[0], hyper["n_minibatch"], mem_dim, cuda) #batch size, n_minibatch, mem_dim 
-    #mem.add_samples([train_qp, train_qv, train_qa, train_tau])
 
     # Start Training Loop:
     t0_start = time.perf_counter()

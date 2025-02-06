@@ -10,6 +10,9 @@ import time
 #     mp.rc('text', usetex=False)
 #     #mp.rcParams['text.latex.preamble'] = r"\usepackage{amsmath}"
 
+import os 
+import scipy.io as sio
+import time 
 # except ImportError:
 #     pass
 
@@ -19,6 +22,7 @@ import time
 from deep_lagrangian_networks.DeLaN_model import DeepLagrangianNetwork
 from deep_lagrangian_networks.replay_memory import PyTorchReplayMemory
 from deep_lagrangian_networks.utils import load_dataset, init_env
+
 
 
 if __name__ == "__main__":
@@ -38,7 +42,16 @@ if __name__ == "__main__":
     train_data, test_data, divider, dt_mean = load_dataset()
     train_labels, train_qp, train_qv, train_qa, train_p, train_pd, train_tau = train_data
     test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g = test_data
-    
+    print("train_qp min/max:", np.min(train_qp[:1000, 0]), np.max(train_qp[:1000, 0]), 
+                            np.min(train_qp[:1000, 1]), np.max(train_qp[:1000, 1]))
+
+    print("train_qv min/max:", np.min(train_qv[:1000, 0]), np.max(train_qv[:1000, 0]), 
+                            np.min(train_qv[:1000, 1]), np.max(train_qv[:1000, 1]))
+
+    print("train_qa min/max:", np.min(train_qa[:1000, 0]), np.max(train_qa[:1000, 0]), 
+                            np.min(train_qa[:1000, 1]), np.max(train_qa[:1000, 1]))
+
+
     print("\n\n################################################")
     print("Characters:")
     print("   Test Characters = {0}".format(test_labels))
@@ -60,10 +73,10 @@ if __name__ == "__main__":
              'w_init': 'xavier_normal',
              'gain_hidden': np.sqrt(2.),
              'gain_output': 0.1,
-             'n_minibatch': 512,
+             'n_minibatch': 64,
              'learning_rate': 5.e-04,
              'weight_decay': 1.e-5,
-             'max_epoch': 10000}
+             'max_epoch': 1000}
 
     # Load existing model parameters:
     if load_model:
@@ -194,11 +207,30 @@ if __name__ == "__main__":
             q = torch.from_numpy(test_qp[i]).float().view(1, -1)
             qd = torch.from_numpy(test_qv[i]).float().view(1, -1)
             qdd = torch.from_numpy(test_qa[i]).float().view(1, -1)
-
+        
             # Compute predicted torque:
             out = delan_model(q, qd, qdd)
             delan_tau[i] = out[0].cpu().numpy().squeeze()
             delan_dEdt[i] = out[1].cpu().numpy()
+    
+    #########data 저장용(선택)#######################
+    metric_folder = "cartpole_metrics_DeLan_example"
+    os.makedirs(metric_folder, exist_ok=True)
+
+    all_data = {key: [] for key in [
+     'delan_tau', 'delan_dEdt', 'delan_m', 'delan_c', 'delan_g', 'test_m', 'test_c', 'test_g', 'test_tau', 
+    ]}
+
+    for key, value in zip([
+     'delan_tau', 'delan_dEdt', 'delan_m', 'delan_c', 'delan_g', 'test_m', 'test_c', 'test_g', 'test_tau', 
+    ], [
+    delan_tau, delan_dEdt, delan_m, delan_c, delan_g, test_m, test_c, test_g, test_tau, 
+    ]):
+        all_data[key].append(value)
+
+    output_path = os.path.join(metric_folder, 'metrics_delan.mat')
+    sio.savemat(output_path, all_data)
+    #######################################################
 
     t_eval = (time.perf_counter() - t0_evaluation) / float(test_qp.shape[0])
 
