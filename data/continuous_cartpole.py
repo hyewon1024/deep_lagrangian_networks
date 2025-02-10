@@ -105,9 +105,27 @@ Any further steps are undefined behavior.
         return np.array(self.state), reward, done, {}
 
     def reset(self):
-        self.state = self.np_random.uniform(low=-0.05, high=0.05, size=(4,))
+                # index 0: -0.05 ~ 0.05 사이의 값
+        self.state = np.random.uniform(low=-0.05, high=0.05, size=(4,))
         self.steps_beyond_done = None
         return np.array(self.state)
+
+    # def reset(self):
+    #     # 카트 위치와 속도는 여전히 작게 유지
+    #     cart_position = np.random.uniform(low=-0.05, high=0.05)
+    #     cart_velocity = np.random.uniform(low=-0.05, high=0.05)
+        
+    #     # 환경에서 균형 상태가 폴 각도가 π, 각속도가 0라고 가정한다면,
+    #     # 각도를 π 근방이지만 균형 상태에서 충분히 벗어난 범위로 설정합니다.
+    #     # 예를 들어, π로부터 ±0.3 라디안 정도 떨어지도록 설정하면,
+    #     # 에이전트가 폴을 바로 잡아야 하는 상황이 됩니다.
+    #     pole_angle = np.random.uniform(low=np.pi - 0.3, high=np.pi + 0.3)
+        
+    #     # 폴 각속도도 0이 아니라 어느 정도 초기 각속도를 부여합니다.
+    #     pole_angular_velocity = np.random.uniform(low=-0.3, high=0.3)
+        
+    #     self.state = np.array([cart_position,  cart_velocity, pole_angle, pole_angular_velocity], dtype=np.float32)
+    #     return self.state
 
     def render(self, mode='human'):
         screen_width = 600

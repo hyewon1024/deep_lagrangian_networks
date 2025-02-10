@@ -61,7 +61,7 @@ if __name__ == "__main__":
              'n_minibatch': 50,
              'learning_rate': 5.e-04,
              'weight_decay': 1.e-5,
-             'max_epoch': 100} #10000
+             'max_epoch': 1000} #10000
     
     #Generate train/test dataset 
     env = gym.make("CartPole-v1")

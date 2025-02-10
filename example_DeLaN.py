@@ -3,13 +3,6 @@ import torch
 import numpy as np
 import time
 
-# import matplotlib as mp
-
-# try:
-#     mp.use("Qt5Agg")
-#     mp.rc('text', usetex=False)
-#     #mp.rcParams['text.latex.preamble'] = r"\usepackage{amsmath}"
-
 import os 
 import scipy.io as sio
 import time 
@@ -22,8 +15,6 @@ import time
 from deep_lagrangian_networks.DeLaN_model import DeepLagrangianNetwork
 from deep_lagrangian_networks.replay_memory import PyTorchReplayMemory
 from deep_lagrangian_networks.utils import load_dataset, init_env
-
-
 
 if __name__ == "__main__":
 
@@ -41,7 +32,23 @@ if __name__ == "__main__":
     n_dof = 2
     train_data, test_data, divider, dt_mean = load_dataset()
     train_labels, train_qp, train_qv, train_qa, train_p, train_pd, train_tau = train_data
+    
     test_labels, test_qp, test_qv, test_qa, test_p, test_pd, test_tau, test_m, test_c, test_g = test_data
+
+    ##
+    metric_folder = "cartpole_metrics_traj"
+    os.makedirs(metric_folder, exist_ok=True)
+
+    all_data_traj = {key: [] for key in [
+        'q','qd', 'qdd', 'tau']}
+
+    for key, value in zip([
+        'q','qd', 'qdd', 'tau'], [test_qp, test_qv, test_qa, test_tau]):
+        all_data_traj[key].append(value)
+
+    output_path = os.path.join(metric_folder, 'metrics_delan_traj.mat')
+    sio.savemat(output_path, all_data_traj)
+
     print("train_qp min/max:", np.min(train_qp[:1000, 0]), np.max(train_qp[:1000, 0]), 
                             np.min(train_qp[:1000, 1]), np.max(train_qp[:1000, 1]))
 

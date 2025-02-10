@@ -13,32 +13,25 @@ from deep_lagrangian_networks.replay_memory import PyTorchReplayMemory
 from deep_lagrangian_networks.utils import load_dataset, init_env
 from generate_dataset import generate_rand_data_with_pd_control
 from data.continuous_cartpole import ContinuousCartPoleEnv
+from data.continuous_acrobot import ContinuousAcrobotEnv
+
 
 def replay_buffer(data, batch_size):
-   
-    data_torch = [
-        torch.from_numpy(x).float() if isinstance(x, np.ndarray) else x
-        for x in data
-    ]
-    
-    train_qp, train_qv, train_qa, train_torque = data_torch[:4]
-    total_samples= train_qp.shape[0]
-    mem= []
+    # 데이터 변환: NumPy 배열 → PyTorch Tensor
+    data_torch = [torch.from_numpy(x).float() if isinstance(x, np.ndarray) else x for x in data]
+    train_qp, train_qv, train_qa, train_torque = data_torch[:4]  # 데이터 분할
 
-    # while total_samples > batch_size:
-    #      idx = random.sample(range(total_samples), batch_size) #random sampling 
-    #      mem.append((train_qp[idx], train_qv[idx] , train_qa[idx], train_torque[idx]))
-    #      total_samples -= batch_size
-
+    total_samples = train_qp.shape[0]
     mem = [
-        (train_qp[i:i + batch_size],
-         train_qv[i:i + batch_size],
-         train_qa[i:i + batch_size],
-         train_torque[i: i + batch_size])
+        (train_qp[i:i + batch_size], 
+         train_qv[i:i + batch_size], 
+         train_qa[i:i + batch_size], 
+         train_torque[i:i + batch_size])
         for i in range(0, total_samples, batch_size)
     ]
-    return mem        
-import torch
+    
+    return mem       
+
 
 def compute_energy(q, qd):
     x, theta, x_dot, theta_dot= q[:,0], q[:,1], qd[:,0], qd[:,1]
@@ -81,10 +74,9 @@ if __name__ == "__main__":
     parser.add_argument("-l", nargs=1, type=int, required=False, default=[0, ], help="Load the DeLaN model")
     parser.add_argument("-m", nargs=1, type=int, required=False, default=[0, ], help="Save the DeLaN model")
     seed, cuda, render, load_model, save_model = init_env(parser.parse_args())
-
     n_dof=2
     #Set hyper Params 
-    hyper = {'n_width': 64,
+    hyper = {'n_width': 128,
              'n_depth': 2,
              'diagonal_epsilon': 0.01,
              'activation': 'SoftPlus',
@@ -93,23 +85,36 @@ if __name__ == "__main__":
              'w_init': 'xavier_normal',
              'gain_hidden': np.sqrt(2.),
              'gain_output': 0.1,
-             'ntrajs': 90,
-             'traj_len': 50,
+             'ntrajs': 1,
+             'traj_len': 1500,
              'dt' : 0.05,
-             'n_minibatch': 128,
-             'learning_rate': 5.e-04,
+             'n_minibatch': 512,
+             'learning_rate': 1.e-04,
              'weight_decay': 1.e-5,
-             'max_epoch': 1000} #10000
+             'max_epoch': 10000} #10000
     
     #Generate train/test dataset 
     #env = gym.make("CartPole-v1")
-    env = ContinuousCartPoleEnv()
+    #env = ContinuousAcrobotEnv("human")
+    env= ContinuousCartPoleEnv()
     train_data= generate_rand_data_with_pd_control(env, ntrajs=hyper["ntrajs"], traj_len=hyper["traj_len"], dt=hyper["dt"], kp=50, kr=10)
-    test_data= generate_rand_data_with_pd_control(env, ntrajs=2, traj_len=100, dt=0.05, kp=50, kr=10)
+    test_data= generate_rand_data_with_pd_control(env, ntrajs=2, traj_len=70, dt=0.05, kp=50, kr=10)
     train_qp, train_qv,  train_qa, train_tau, train_m, train_c, train_g, train_f, train_control_input= train_data #prediction model과의 torque, dE/dt 차이를 계산
-    test_qp, test_qv,  test_qa, test_tau, test_m, test_c, test_g, test_f, test_control_input = test_data
+    test_qp, test_qv, test_qa, test_tau, test_m, test_c, test_g, test_f, test_control_input = test_data
+    ##
+    metric_folder = "cartpole_metrics_traj"
+    os.makedirs(metric_folder, exist_ok=True)
 
-     # Load existing model parameters:
+    all_data_traj = {key: [] for key in [
+        'q','qd', 'qdd', 'tau']}
+
+    for key, value in zip([
+        'q','qd', 'qdd', 'tau'], [test_qp, test_qv, test_qa, test_tau]):
+        all_data_traj[key].append(value)
+
+    output_path = os.path.join(metric_folder, 'metrics_delan_traj.mat')
+    sio.savemat(output_path, all_data_traj)
+##
     if load_model:
         load_file = "data/delan_model.torch"
         state = torch.load(load_file)
@@ -158,7 +163,6 @@ if __name__ == "__main__":
         #     last_error=np.zeros_like(q_target)
 
         for i, (q, qd, qdd, tau) in enumerate(mem):
-            zeros = torch.zeros_like(q).float().to(delan_model.device)
             t0_batch = time.perf_counter()
 
             optimizer.zero_grad()
@@ -181,16 +185,15 @@ if __name__ == "__main__":
             
             # qdd= delan_model.for_dyn(q, qd, tau)
             tau_hat, dEdt_hat = delan_model(q, qd, qdd)
-            tau_= compute_tau(q, qd, qdd)
 
 
             # Compute the loss of the Euler-Lagrange Differential Equation:
-            err_inv = torch.sum((tau_hat - tau_) ** 2, dim=1)
+            err_inv = torch.sum((tau_hat - tau) ** 2, dim=1)
             l_mean_inv_dyn = torch.mean(err_inv)
             l_var_inv_dyn = torch.var(err_inv)
 
             # Compute the loss of the Power Conservation:
-            dEdt = torch.matmul(qd.view(-1, 2, 1).transpose(dim0=1, dim1=2), tau_.view(-1, 2, 1)).view(-1)
+            dEdt = torch.matmul(qd.view(-1, 2, 1).transpose(dim0=1, dim1=2), tau.view(-1, 2, 1)).view(-1)
             err_dEdt = (dEdt_hat - dEdt) ** 2
             l_mean_dEdt = torch.mean(err_dEdt)
             l_var_dEdt = torch.var(err_dEdt)
@@ -199,7 +202,7 @@ if __name__ == "__main__":
             loss = l_mean_inv_dyn + l_mean_dEdt #수정 원래 l_mem_mean_dEdt
             loss.backward()
             optimizer.step()
-
+            
             # Update internal data:
             n_batches += 1
             l_mem += loss.item()
@@ -217,7 +220,7 @@ if __name__ == "__main__":
         l_mem_var_dEdt /= float(n_batches)
         l_mem /= float(n_batches)
         epoch_i += 1
-        if epoch_i == 1 or np.mod(epoch_i, 100) == 0:
+        if epoch_i == 1 or np.mod(epoch_i, 10) == 0:
             print("Epoch {0:05d}: ".format(epoch_i), end=" ")
             print("Time = {0:05.1f}s".format(time.perf_counter() - t0_start), end=", ")
             print("Loss = {0:.3e}".format(l_mem), end=", ")
@@ -233,7 +236,9 @@ if __name__ == "__main__":
     q = torch.from_numpy(test_qp).float().to(delan_model.device)
     qd = torch.from_numpy(test_qv).float().to(delan_model.device)
     qdd = torch.from_numpy(test_qa).float().to(delan_model.device)
+
     zeros = torch.zeros_like(q).float().to(delan_model.device)
+
 
     # Compute the torque decomposition:
     with torch.no_grad():
@@ -283,7 +288,7 @@ if __name__ == "__main__":
     for key, value in zip([
         'q','qd', 'qdd', 'delan_tau', 'delan_dEdt', 'delan_m', 'delan_c', 'delan_g', 'test_m', 'test_c', 'test_g', 'test_tau', 'test_torque'
     ], [
-    test_qp, test_qv,  test_qa,  delan_tau, delan_dEdt, delan_m, delan_c, delan_g, test_m, test_c, test_g, test_save_tau, test_control_input
+    test_qp, test_qv,  test_qa,  delan_tau, delan_dEdt, delan_m, delan_c, delan_g, test_m, test_c, test_g, test_tau, test_control_input
     ]):
         all_data[key].append(value)
 

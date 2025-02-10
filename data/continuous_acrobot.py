@@ -75,20 +75,22 @@ class ContinuousAcrobotEnv(core.Env):
         self.state = None
 
     def reset(self):
-        self.state = np.random.uniform(low=-0.1, high=0.1, size=(4,)).astype(np.float32)
+        self.state = np.random.uniform(low=-0.05, high=0.05, size=(4,))
+        self.steps_beyond_done = None
         return np.array(self.state)
 
+
     def step(self, a):
-        s = self.state
+        s = self.state 
         assert s is not None, "Call reset before using AcrobotEnv object."
         assert self.action_space.contains(a), \
         "%r (%s) invalid" % (a, type(a))
 
-        torque = a
+        torque = a * 5
 
         # Add noise to the force action
         if self.torque_noise_max > 0:
-            torque += self.np_random.uniform(
+            torque += np.random.uniform(
                 -self.torque_noise_max, self.torque_noise_max
             )
 

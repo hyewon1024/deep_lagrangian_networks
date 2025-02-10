@@ -75,7 +75,22 @@ class CosDer(nn.Module):
     def forward(self, x):
         return -torch.sin(x)
 
+class Sigmoid(nn.Module):
+    def __init__(self):
+        super(Sigmoid, self).__init__()
 
+    def forward(self, x):
+        return torch.sigmoid(x)
+
+
+class SigmoidDer(nn.Module):
+    def __init__(self):
+        super(SigmoidDer, self).__init__()
+
+    def forward(self, x):
+        sig_x = torch.sigmoid(x)
+        return sig_x * (1 - sig_x)
+    
 class LagrangianLayer(nn.Module):
 
     def __init__(self, input_size, n_dof, activation="ReLu"):
@@ -99,13 +114,18 @@ class LagrangianLayer(nn.Module):
         elif activation == "Cos":
             self.g = Cos()
             self.g_prime = CosDer()
+        
+        #내가 추가한 부분
+        elif activation== "Sigmoid":
+            self.g= Sigmoid()
+            self.g_prime= SigmoidDer() 
 
         elif activation == "Linear":
             self.g = Linear()
             self.g_prime = LinearDer()
 
         else:
-            raise ValueError("Activation Type must be in ['Linear', 'ReLu', 'SoftPlus', 'Cos'] but is {0}".format(self.activation))
+            raise ValueError("Activation Type must be in ['Linear', 'ReLu', 'SoftPlus', 'Cos', 'Sigmoid'] but is {0}".format(self.activation))
 
     def forward(self, q, der_prev):
         # Apply Affine Transformation:
@@ -231,14 +251,14 @@ class DeepLagrangianNetwork(nn.Module):
             init_hidden(self.layers[-1])
 
         # Create output Layer:
-        self.net_g = LagrangianLayer(self.n_width, 1, activation="Linear")
+        self.net_g = LagrangianLayer(self.n_width, 1, activation="Linear") 
         init_output(self.net_g)
 
         self.net_lo = LagrangianLayer(self.n_width, l_lower_size, activation="Linear")
         init_hidden(self.net_lo)
 
         # The diagonal must be non-negative. Therefore, the non-linearity is set to ReLu.
-        self.net_ld = LagrangianLayer(self.n_width, self.n_dof, activation="ReLu")
+        self.net_ld = LagrangianLayer(self.n_width, self.n_dof, activation="ReLu") # 기존에는 ReLU 였다가 행 전체가 0이 되버려서 activation 수정  
         init_hidden(self.net_ld)
         torch.nn.init.constant_(self.net_ld.bias, self._b0_diag)
 
@@ -263,8 +283,8 @@ class DeepLagrangianNetwork(nn.Module):
             y, der = self.layers[i](y, der)
 
         # Compute the network heads including the corresponding derivative:
-        l_lower, der_l_lower = self.net_lo(y, der)
-        l_diag, der_l_diag = self.net_ld(y, der)
+        l_lower, der_l_lower = self.net_lo(y, der) 
+        l_diag, der_l_diag = self.net_ld(y, der) # 값이 이상함. 
 
         # Compute the potential energy and the gravitational force:
         V, der_V = self.net_g(y, der)
